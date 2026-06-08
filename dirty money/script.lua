@@ -2,7 +2,7 @@ local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/jen
 local Window = OrionLib:MakeWindow({
     Name = "Mod Menu",
     HidePremium = true,
-    SaveConfig = false,
+    SaveConfig = true,
     IntroEnabled = true,
     IntroText = "Loading Mod Menu..."
 })
@@ -26,11 +26,13 @@ local zipConn = nil
 local autoRotateFix = nil
 local noclipEnabled = false
 local noclipConnection = nil
+
 local FLYING = false
 local QEfly = true
 local iyflyspeed = 1
 local vehicleflyspeed = 1
 local flyKeyDown, flyKeyUp
+
 local ESPenabled = false
 local espTransparency = 0.5
 local espLogic = true
@@ -136,109 +138,117 @@ local function toggleNoclip(state)
 end
 
 ---------------------------------------------------------
--- FLY
+-- FLY (YOUR ORIGINAL SCRIPT)
 ---------------------------------------------------------
-local function sFLY(vfly)
-    local char = plr.Character or plr.CharacterAdded:Wait()
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid then
-        repeat RunService.Heartbeat:Wait() until char:FindFirstChildOfClass("Humanoid")
-        humanoid = char:FindFirstChildOfClass("Humanoid")
-    end
+function sFLY(vfly)
+	local plr = Players.LocalPlayer
+	local char = plr.Character or plr.CharacterAdded:Wait()
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		repeat task.wait() until char:FindFirstChildOfClass("Humanoid")
+		humanoid = char:FindFirstChildOfClass("Humanoid")
+	end
 
-    if flyKeyDown then flyKeyDown:Disconnect() end
-    if flyKeyUp then flyKeyUp:Disconnect() end
+	if flyKeyDown or flyKeyUp then
+		pcall(function() flyKeyDown:Disconnect() end)
+		pcall(function() flyKeyUp:Disconnect() end)
+	end
 
-    local T = getRoot(char)
-    if not T then return end
+	local T = getRoot(char)
+	local CONTROL = {F = 0, B = 0, L = 0, R = 0, Q = 0, E = 0}
+	local lCONTROL = {F = 0, B = 0, L = 0, R = 0, Q = 0, E = 0}
+	local SPEED = 0
 
-    local CONTROL = {F=0, B=0, L=0, R=0, Q=0, E=0}
-    local lCONTROL = {F=0, B=0, L=0, R=0, Q=0, E=0}
-    local SPEED = 0
-    local savedWalkSpeed = humanoid.WalkSpeed
+	local function FLY()
+		FLYING = true
+		local BG = Instance.new('BodyGyro')
+		local BV = Instance.new('BodyVelocity')
+		BG.P = 9e4
+		BG.Parent = T
+		BV.Parent = T
+		BG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+		BG.CFrame = T.CFrame
+		BV.Velocity = Vector3.new(0, 0, 0)
+		BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+		task.spawn(function()
+			repeat task.wait()
+				local camera = workspace.CurrentCamera
+				if not vfly and humanoid then
+					humanoid.PlatformStand = true
+				end
 
-    local function FLY()
-        FLYING = true
-        humanoid.WalkSpeed = 0
-        local BG = Instance.new("BodyGyro")
-        local BV = Instance.new("BodyVelocity")
-        BG.P = 9e4
-        BG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
-        BG.CFrame = T.CFrame
-        BG.Parent = T
-        BV.Velocity = Vector3.new(0,0,0)
-        BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-        BV.Parent = T
+				if CONTROL.L + CONTROL.R ~= 0 or CONTROL.F + CONTROL.B ~= 0 or CONTROL.Q + CONTROL.E ~= 0 then
+					SPEED = 50
+				elseif not (CONTROL.L + CONTROL.R ~= 0 or CONTROL.F + CONTROL.B ~= 0 or CONTROL.Q + CONTROL.E ~= 0) and SPEED ~= 0 then
+					SPEED = 0
+				end
+				if (CONTROL.L + CONTROL.R) ~= 0 or (CONTROL.F + CONTROL.B) ~= 0 or (CONTROL.Q + CONTROL.E) ~= 0 then
+					BV.Velocity = ((camera.CFrame.LookVector * (CONTROL.F + CONTROL.B)) + ((camera.CFrame * CFrame.new(CONTROL.L + CONTROL.R, (CONTROL.F + CONTROL.B + CONTROL.Q + CONTROL.E) * 0.2, 0).p) - camera.CFrame.p)) * SPEED
+					lCONTROL = {F = CONTROL.F, B = CONTROL.B, L = CONTROL.L, R = CONTROL.R}
+				elseif (CONTROL.L + CONTROL.R) == 0 and (CONTROL.F + CONTROL.B) == 0 and (CONTROL.Q + CONTROL.E) == 0 and SPEED ~= 0 then
+					BV.Velocity = ((camera.CFrame.LookVector * (lCONTROL.F + lCONTROL.B)) + ((camera.CFrame * CFrame.new(lCONTROL.L + lCONTROL.R, (lCONTROL.F + lCONTROL.B + CONTROL.Q + CONTROL.E) * 0.2, 0).p) - camera.CFrame.p)) * SPEED
+				else
+					BV.Velocity = Vector3.new(0, 0, 0)
+				end
+				BG.CFrame = camera.CFrame
+			until not FLYING
+			CONTROL = {F = 0, B = 0, L = 0, R = 0, Q = 0, E = 0}
+			lCONTROL = {F = 0, B = 0, L = 0, R = 0, Q = 0, E = 0}
+			SPEED = 0
+			BG:Destroy()
+			BV:Destroy()
 
-        task.spawn(function()
-            repeat
-                RunService.Heartbeat:Wait()
-                local camera = workspace.CurrentCamera
-                if not vfly and humanoid then
-                    humanoid.PlatformStand = true
-                end
-                local moving = CONTROL.L+CONTROL.R ~= 0 or CONTROL.F+CONTROL.B ~= 0 or CONTROL.Q+CONTROL.E ~= 0
-                SPEED = moving and 50*iyflyspeed or 0
-                if moving then
-                    BV.Velocity = ((camera.CFrame.LookVector * (CONTROL.F+CONTROL.B)) + ((camera.CFrame * CFrame.new(CONTROL.L+CONTROL.R, (CONTROL.F+CONTROL.B+CONTROL.Q+CONTROL.E)*0.2, 0).p) - camera.CFrame.p)) * SPEED
-                    lCONTROL = {F=CONTROL.F, B=CONTROL.B, L=CONTROL.L, R=CONTROL.R}
-                else
-                    BV.Velocity = Vector3.new(0,0,0)
-                end
-                BG.CFrame = camera.CFrame
-            until not FLYING
+			if humanoid then humanoid.PlatformStand = false end
+		end)
+	end
 
-            CONTROL = {F=0, B=0, L=0, R=0, Q=0, E=0}
-            lCONTROL = {F=0, B=0, L=0, R=0, Q=0, E=0}
-            SPEED = 0
-            BG:Destroy()
-            BV:Destroy()
-            if humanoid then
-                humanoid.PlatformStand = false
-                humanoid.WalkSpeed = savedWalkSpeed
-            end
-        end)
-    end
+	flyKeyDown = UserInputService.InputBegan:Connect(function(input, processed)
+		if processed then return end
+		if input.KeyCode == Enum.KeyCode.W then
+			CONTROL.F = (vfly and vehicleflyspeed or iyflyspeed)
+		elseif input.KeyCode == Enum.KeyCode.S then
+			CONTROL.B = - (vfly and vehicleflyspeed or iyflyspeed)
+		elseif input.KeyCode == Enum.KeyCode.A then
+			CONTROL.L = - (vfly and vehicleflyspeed or iyflyspeed)
+		elseif input.KeyCode == Enum.KeyCode.D then
+			CONTROL.R = (vfly and vehicleflyspeed or iyflyspeed)
+		elseif input.KeyCode == Enum.KeyCode.E and QEfly then
+			CONTROL.Q = (vfly and vehicleflyspeed or iyflyspeed)*2
+		elseif input.KeyCode == Enum.KeyCode.Q and QEfly then
+			CONTROL.E = -(vfly and vehicleflyspeed or iyflyspeed)*2
+		end
+		pcall(function() workspace.CurrentCamera.CameraType = Enum.CameraType.Track end)
+	end)
 
-    flyKeyDown = UserInputService.InputBegan:Connect(function(input, processed)
-        if processed then return end
-        local spd = vfly and vehicleflyspeed or iyflyspeed
-        if input.KeyCode == Enum.KeyCode.W then CONTROL.F = spd
-        elseif input.KeyCode == Enum.KeyCode.S then CONTROL.B = -spd
-        elseif input.KeyCode == Enum.KeyCode.A then CONTROL.L = -spd
-        elseif input.KeyCode == Enum.KeyCode.D then CONTROL.R = spd
-        elseif input.KeyCode == Enum.KeyCode.E and QEfly then CONTROL.Q = spd*2
-        elseif input.KeyCode == Enum.KeyCode.Q and QEfly then CONTROL.E = -spd*2
-        end
-    end)
-
-    flyKeyUp = UserInputService.InputEnded:Connect(function(input, processed)
-        if processed then return end
-        if input.KeyCode == Enum.KeyCode.W then CONTROL.F = 0
-        elseif input.KeyCode == Enum.KeyCode.S then CONTROL.B = 0
-        elseif input.KeyCode == Enum.KeyCode.A then CONTROL.L = 0
-        elseif input.KeyCode == Enum.KeyCode.D then CONTROL.R = 0
-        elseif input.KeyCode == Enum.KeyCode.E then CONTROL.Q = 0
-        elseif input.KeyCode == Enum.KeyCode.Q then CONTROL.E = 0
-        end
-    end)
-
-    FLY()
+	flyKeyUp = UserInputService.InputEnded:Connect(function(input, processed)
+		if processed then return end
+		if input.KeyCode == Enum.KeyCode.W then
+			CONTROL.F = 0
+		elseif input.KeyCode == Enum.KeyCode.S then
+			CONTROL.B = 0
+		elseif input.KeyCode == Enum.KeyCode.A then
+			CONTROL.L = 0
+		elseif input.KeyCode == Enum.KeyCode.D then
+			CONTROL.R = 0
+		elseif input.KeyCode == Enum.KeyCode.E then
+			CONTROL.Q = 0
+		elseif input.KeyCode == Enum.KeyCode.Q then
+			CONTROL.E = 0
+		end
+	end)
+	FLY()
 end
 
-local function NOFLY()
-    FLYING = false
-    if flyKeyDown then flyKeyDown:Disconnect() flyKeyDown = nil end
-    if flyKeyUp then flyKeyUp:Disconnect() flyKeyUp = nil end
-    local char = plr.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum.PlatformStand = false
-            hum.WalkSpeed = 16
-        end
+function NOFLY()
+	FLYING = false
+	if flyKeyDown or flyKeyUp then 
+        pcall(function() flyKeyDown:Disconnect() end) 
+        pcall(function() flyKeyUp:Disconnect() end) 
     end
-    pcall(function() workspace.CurrentCamera.CameraType = Enum.CameraType.Custom end)
+	if Players.LocalPlayer.Character:FindFirstChildOfClass('Humanoid') then
+		Players.LocalPlayer.Character:FindFirstChildOfClass('Humanoid').PlatformStand = false
+	end
+	pcall(function() workspace.CurrentCamera.CameraType = Enum.CameraType.Custom end)
 end
 
 ---------------------------------------------------------
@@ -261,7 +271,6 @@ end
 
 local function ESP(player, logic)
     task.spawn(function()
-        -- clean up this player's old connections first
         if espPlayerConnections[player.Name] then
             for _, conn in pairs(espPlayerConnections[player.Name]) do
                 pcall(function() conn:Disconnect() end)
@@ -384,7 +393,6 @@ local function runSmugglerLoop()
             continue
         end
 
-        -- start: tp to mission dealer
         local missionDealer = workspace["Scenic NPCs"] and workspace["Scenic NPCs"]:FindFirstChild("MissionDealer1")
         local dealerHead = missionDealer and missionDealer:FindFirstChild("Head")
         if dealerHead then
@@ -394,7 +402,6 @@ local function runSmugglerLoop()
 
         if not smugglerEnabled then break end
 
-        -- contract: wait for courier npc to spawn then tp
         warn("[Smuggler] Waiting for CourierNPC...")
         local courierHead = waitForNPC({"Quests", "CourierNPC", "Head"}, 120)
         if not smugglerEnabled then break end
@@ -409,7 +416,6 @@ local function runSmugglerLoop()
 
         if not smugglerEnabled then break end
 
-        -- end: tp back to mission dealer
         missionDealer = workspace["Scenic NPCs"] and workspace["Scenic NPCs"]:FindFirstChild("MissionDealer1")
         dealerHead = missionDealer and missionDealer:FindFirstChild("Head")
         if dealerHead then
@@ -419,7 +425,6 @@ local function runSmugglerLoop()
 
         if not smugglerEnabled then break end
 
-        -- wait for courier npc to respawn before looping
         warn("[Smuggler] Waiting for CourierNPC to respawn...")
         local respawned = false
         while smugglerEnabled and not respawned do
@@ -739,6 +744,16 @@ Tab2:AddButton({
         OrionLib:Destroy()
     end
 })
+
+---------------------------------------------------------
+-- RESPAWN HANDLER
+---------------------------------------------------------
+plr.CharacterAdded:Connect(function(newChar)
+    if FLYING then
+        task.wait(0.5)
+        sFLY(false)
+    end
+end)
 
 ---------------------------------------------------------
 -- INIT
