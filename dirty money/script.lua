@@ -1,0 +1,746 @@
+local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/jensonhirst/Orion/main/source')))()
+local Window = OrionLib:MakeWindow({
+    Name = "Mod Menu",
+    HidePremium = true,
+    SaveConfig = false,
+    IntroEnabled = true,
+    IntroText = "Loading Mod Menu..."
+})
+
+local Players = game:GetService("Players")
+local plr = Players.LocalPlayer
+local BridgeNet2 = require(game.ReplicatedStorage.Requires.BridgeNet2)
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local StateMachine = require(game.ReplicatedStorage.Requires.StateMachine)
+local COREGUI = game:GetService("CoreGui")
+
+---------------------------------------------------------
+-- STATE
+---------------------------------------------------------
+local FallDamage = BridgeNet2.ReferenceBridge("FallDamage")
+local oldFire = FallDamage.Fire
+local fallDamageEnabled = false
+local zipEnabled = false
+local zipConn = nil
+local autoRotateFix = nil
+local noclipEnabled = false
+local noclipConnection = nil
+local FLYING = false
+local QEfly = true
+local iyflyspeed = 1
+local vehicleflyspeed = 1
+local flyKeyDown, flyKeyUp
+local ESPenabled = false
+local espTransparency = 0.5
+local espLogic = true
+local espPlayerAddedConn = nil
+local espConnections = {}
+local espPlayerConnections = {}
+local smugglerEnabled = false
+local smugglerThread = nil
+
+---------------------------------------------------------
+-- UTILITY
+---------------------------------------------------------
+local function getRoot(char)
+    return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+end
+
+local function round(num, numDecimalPlaces)
+    local mult = 10^(numDecimalPlaces or 0)
+    return math.floor(num * mult + 0.5) / mult
+end
+
+local function tpTo(obj)
+    local char = plr.Character
+    if not (char and char:FindFirstChild("HumanoidRootPart")) then return end
+    if obj:IsA("Model") then
+        char:PivotTo(obj:GetPivot())
+    elseif obj:IsA("BasePart") then
+        char:PivotTo(obj.CFrame)
+    end
+end
+
+---------------------------------------------------------
+-- ZIP PATCH
+---------------------------------------------------------
+local function patchZip(char)
+    if not zipEnabled then return end
+    local effects = char:WaitForChild("Effects")
+    if not effects:FindFirstChild("Ziplining") then
+        local tag = Instance.new("BoolValue")
+        tag.Name = "Ziplining"
+        tag.Parent = effects
+    end
+end
+
+local function removeZip(char)
+    local effects = char and char:FindFirstChild("Effects")
+    if effects then
+        local tag = effects:FindFirstChild("Ziplining")
+        if tag then tag:Destroy() end
+    end
+end
+
+---------------------------------------------------------
+-- AUTOROTATE FIX
+---------------------------------------------------------
+local function startAutoRotateFix()
+    if autoRotateFix then return end
+    RunService:BindToRenderStep("AutoRotateFix", Enum.RenderPriority.Last.Value + 1, function()
+        if not zipEnabled then return end
+        local char = plr.Character
+        if not char then return end
+        local hum = char:FindFirstChild("Humanoid")
+        if not hum then return end
+        if StateMachine.getState() == "AimingGun" then
+            hum.AutoRotate = false
+        else
+            hum.AutoRotate = true
+        end
+    end)
+    autoRotateFix = true
+end
+
+local function stopAutoRotateFix()
+    RunService:UnbindFromRenderStep("AutoRotateFix")
+    autoRotateFix = nil
+    local char = plr.Character
+    if char then
+        local hum = char:FindFirstChild("Humanoid")
+        if hum then hum.AutoRotate = true end
+    end
+end
+
+---------------------------------------------------------
+-- NOCLIP
+---------------------------------------------------------
+local function toggleNoclip(state)
+    noclipEnabled = state
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
+    end
+    if state then
+        noclipConnection = RunService.RenderStepped:Connect(function()
+            local char = plr.Character
+            if not char then return end
+            for _, v in pairs(char:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    v.CanCollide = false
+                end
+            end
+        end)
+    end
+end
+
+---------------------------------------------------------
+-- FLY
+---------------------------------------------------------
+local function sFLY(vfly)
+    local char = plr.Character or plr.CharacterAdded:Wait()
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
+        repeat RunService.Heartbeat:Wait() until char:FindFirstChildOfClass("Humanoid")
+        humanoid = char:FindFirstChildOfClass("Humanoid")
+    end
+
+    if flyKeyDown then flyKeyDown:Disconnect() end
+    if flyKeyUp then flyKeyUp:Disconnect() end
+
+    local T = getRoot(char)
+    if not T then return end
+
+    local CONTROL = {F=0, B=0, L=0, R=0, Q=0, E=0}
+    local lCONTROL = {F=0, B=0, L=0, R=0, Q=0, E=0}
+    local SPEED = 0
+    local savedWalkSpeed = humanoid.WalkSpeed
+
+    local function FLY()
+        FLYING = true
+        humanoid.WalkSpeed = 0
+        local BG = Instance.new("BodyGyro")
+        local BV = Instance.new("BodyVelocity")
+        BG.P = 9e4
+        BG.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        BG.CFrame = T.CFrame
+        BG.Parent = T
+        BV.Velocity = Vector3.new(0,0,0)
+        BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        BV.Parent = T
+
+        task.spawn(function()
+            repeat
+                RunService.Heartbeat:Wait()
+                local camera = workspace.CurrentCamera
+                if not vfly and humanoid then
+                    humanoid.PlatformStand = true
+                end
+                local moving = CONTROL.L+CONTROL.R ~= 0 or CONTROL.F+CONTROL.B ~= 0 or CONTROL.Q+CONTROL.E ~= 0
+                SPEED = moving and 50*iyflyspeed or 0
+                if moving then
+                    BV.Velocity = ((camera.CFrame.LookVector * (CONTROL.F+CONTROL.B)) + ((camera.CFrame * CFrame.new(CONTROL.L+CONTROL.R, (CONTROL.F+CONTROL.B+CONTROL.Q+CONTROL.E)*0.2, 0).p) - camera.CFrame.p)) * SPEED
+                    lCONTROL = {F=CONTROL.F, B=CONTROL.B, L=CONTROL.L, R=CONTROL.R}
+                else
+                    BV.Velocity = Vector3.new(0,0,0)
+                end
+                BG.CFrame = camera.CFrame
+            until not FLYING
+
+            CONTROL = {F=0, B=0, L=0, R=0, Q=0, E=0}
+            lCONTROL = {F=0, B=0, L=0, R=0, Q=0, E=0}
+            SPEED = 0
+            BG:Destroy()
+            BV:Destroy()
+            if humanoid then
+                humanoid.PlatformStand = false
+                humanoid.WalkSpeed = savedWalkSpeed
+            end
+        end)
+    end
+
+    flyKeyDown = UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        local spd = vfly and vehicleflyspeed or iyflyspeed
+        if input.KeyCode == Enum.KeyCode.W then CONTROL.F = spd
+        elseif input.KeyCode == Enum.KeyCode.S then CONTROL.B = -spd
+        elseif input.KeyCode == Enum.KeyCode.A then CONTROL.L = -spd
+        elseif input.KeyCode == Enum.KeyCode.D then CONTROL.R = spd
+        elseif input.KeyCode == Enum.KeyCode.E and QEfly then CONTROL.Q = spd*2
+        elseif input.KeyCode == Enum.KeyCode.Q and QEfly then CONTROL.E = -spd*2
+        end
+    end)
+
+    flyKeyUp = UserInputService.InputEnded:Connect(function(input, processed)
+        if processed then return end
+        if input.KeyCode == Enum.KeyCode.W then CONTROL.F = 0
+        elseif input.KeyCode == Enum.KeyCode.S then CONTROL.B = 0
+        elseif input.KeyCode == Enum.KeyCode.A then CONTROL.L = 0
+        elseif input.KeyCode == Enum.KeyCode.D then CONTROL.R = 0
+        elseif input.KeyCode == Enum.KeyCode.E then CONTROL.Q = 0
+        elseif input.KeyCode == Enum.KeyCode.Q then CONTROL.E = 0
+        end
+    end)
+
+    FLY()
+end
+
+local function NOFLY()
+    FLYING = false
+    if flyKeyDown then flyKeyDown:Disconnect() flyKeyDown = nil end
+    if flyKeyUp then flyKeyUp:Disconnect() flyKeyUp = nil end
+    local char = plr.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.PlatformStand = false
+            hum.WalkSpeed = 16
+        end
+    end
+    pcall(function() workspace.CurrentCamera.CameraType = Enum.CameraType.Custom end)
+end
+
+---------------------------------------------------------
+-- ESP
+---------------------------------------------------------
+local function clearAllESP()
+    for playerName, conns in pairs(espPlayerConnections) do
+        for _, conn in pairs(conns) do
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+    espPlayerConnections = {}
+    espConnections = {}
+    for _, v in pairs(COREGUI:GetChildren()) do
+        if v.Name:match("_ESP$") then
+            v:Destroy()
+        end
+    end
+end
+
+local function ESP(player, logic)
+    task.spawn(function()
+        -- clean up this player's old connections first
+        if espPlayerConnections[player.Name] then
+            for _, conn in pairs(espPlayerConnections[player.Name]) do
+                pcall(function() conn:Disconnect() end)
+            end
+        end
+        espPlayerConnections[player.Name] = {}
+
+        local existing = COREGUI:FindFirstChild(player.Name.."_ESP")
+        if existing then existing:Destroy() end
+        task.wait()
+
+        if not ESPenabled then return end
+        if player.Name == plr.Name then return end
+        if not player.Character then return end
+
+        local char = player.Character
+        local root = getRoot(char)
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not (root and hum) then return end
+
+        local ESPholder = Instance.new("Folder")
+        ESPholder.Name = player.Name.."_ESP"
+        ESPholder.Parent = COREGUI
+
+        for _, n in pairs(char:GetChildren()) do
+            if n:IsA("BasePart") then
+                local a = Instance.new("BoxHandleAdornment")
+                a.Name = player.Name
+                a.Parent = ESPholder
+                a.Adornee = n
+                a.AlwaysOnTop = true
+                a.ZIndex = 10
+                a.Size = n.Size
+                a.Transparency = espTransparency
+                a.Color = logic and BrickColor.new(player.TeamColor == plr.TeamColor and "Bright green" or "Bright red") or player.TeamColor
+            end
+        end
+
+        local head = char:FindFirstChild("Head")
+        if not head then return end
+
+        local BillboardGui = Instance.new("BillboardGui")
+        BillboardGui.Adornee = head
+        BillboardGui.Name = player.Name
+        BillboardGui.Parent = ESPholder
+        BillboardGui.Size = UDim2.new(0, 100, 0, 150)
+        BillboardGui.StudsOffset = Vector3.new(0, 1, 0)
+        BillboardGui.AlwaysOnTop = true
+
+        local TextLabel = Instance.new("TextLabel")
+        TextLabel.Parent = BillboardGui
+        TextLabel.BackgroundTransparency = 1
+        TextLabel.Position = UDim2.new(0, 0, 0, -50)
+        TextLabel.Size = UDim2.new(0, 100, 0, 100)
+        TextLabel.Font = Enum.Font.SourceSansSemibold
+        TextLabel.TextSize = 20
+        TextLabel.TextColor3 = Color3.new(1, 1, 1)
+        TextLabel.TextStrokeTransparency = 0
+        TextLabel.TextYAlignment = Enum.TextYAlignment.Bottom
+        TextLabel.Text = "Name: "..player.Name
+        TextLabel.ZIndex = 10
+
+        local lastUpdate = 0
+        local espLoop = RunService.RenderStepped:Connect(function()
+            if not ESPenabled or not COREGUI:FindFirstChild(player.Name.."_ESP") then return end
+            local now = tick()
+            if now - lastUpdate < 0.5 then return end
+            lastUpdate = now
+            if player.Character and getRoot(player.Character) and plr.Character and getRoot(plr.Character) then
+                local dist = math.floor((getRoot(plr.Character).Position - getRoot(player.Character).Position).Magnitude)
+                local hp = player.Character:FindFirstChildOfClass("Humanoid")
+                TextLabel.Text = "Name: "..player.Name.." | HP: "..(hp and round(hp.Health,1) or "?").." | "..dist.."st"
+            end
+        end)
+        table.insert(espPlayerConnections[player.Name], espLoop)
+
+        local charConn = player.CharacterAdded:Connect(function()
+            if ESPenabled then
+                ESPholder:Destroy()
+                task.wait(1)
+                ESP(player, logic)
+            end
+        end)
+        table.insert(espPlayerConnections[player.Name], charConn)
+
+        local teamConn = player:GetPropertyChangedSignal("TeamColor"):Connect(function()
+            if ESPenabled then
+                ESPholder:Destroy()
+                task.wait(1)
+                ESP(player, logic)
+            end
+        end)
+        table.insert(espPlayerConnections[player.Name], teamConn)
+    end)
+end
+
+---------------------------------------------------------
+-- SMUGGLER AUTO
+---------------------------------------------------------
+local function waitForNPC(path, timeout)
+    local deadline = tick() + (timeout or 60)
+    while tick() < deadline do
+        local obj = workspace
+        local found = true
+        for _, key in ipairs(path) do
+            obj = obj:FindFirstChild(key)
+            if not obj then found = false break end
+        end
+        if found then return obj end
+        task.wait(1)
+    end
+    return nil
+end
+
+local function runSmugglerLoop()
+    while smugglerEnabled do
+        local char = plr.Character
+        if not (char and char:FindFirstChild("HumanoidRootPart")) then
+            task.wait(1)
+            continue
+        end
+
+        -- start: tp to mission dealer
+        local missionDealer = workspace["Scenic NPCs"] and workspace["Scenic NPCs"]:FindFirstChild("MissionDealer1")
+        local dealerHead = missionDealer and missionDealer:FindFirstChild("Head")
+        if dealerHead then
+            tpTo(dealerHead)
+            task.wait(1)
+        end
+
+        if not smugglerEnabled then break end
+
+        -- contract: wait for courier npc to spawn then tp
+        warn("[Smuggler] Waiting for CourierNPC...")
+        local courierHead = waitForNPC({"Quests", "CourierNPC", "Head"}, 120)
+        if not smugglerEnabled then break end
+        if courierHead then
+            tpTo(courierHead)
+            task.wait(1)
+        else
+            warn("[Smuggler] CourierNPC not found, retrying...")
+            task.wait(2)
+            continue
+        end
+
+        if not smugglerEnabled then break end
+
+        -- end: tp back to mission dealer
+        missionDealer = workspace["Scenic NPCs"] and workspace["Scenic NPCs"]:FindFirstChild("MissionDealer1")
+        dealerHead = missionDealer and missionDealer:FindFirstChild("Head")
+        if dealerHead then
+            tpTo(dealerHead)
+            task.wait(1)
+        end
+
+        if not smugglerEnabled then break end
+
+        -- wait for courier npc to respawn before looping
+        warn("[Smuggler] Waiting for CourierNPC to respawn...")
+        local respawned = false
+        while smugglerEnabled and not respawned do
+            local quests = workspace:FindFirstChild("Quests")
+            local npc = quests and quests:FindFirstChild("CourierNPC")
+            if npc then
+                respawned = true
+            else
+                task.wait(1)
+            end
+        end
+    end
+    warn("[Smuggler] Loop stopped")
+end
+
+---------------------------------------------------------
+-- TABS
+---------------------------------------------------------
+local Tab1 = Window:MakeTab({ Name = "Patches", PremiumOnly = false })
+local TabMove = Window:MakeTab({ Name = "Movement", PremiumOnly = false })
+local TabVis = Window:MakeTab({ Name = "Visuals", PremiumOnly = false })
+local TabAuto = Window:MakeTab({ Name = "Auto", PremiumOnly = false })
+local Tab3 = Window:MakeTab({ Name = "Scripts", PremiumOnly = false })
+local Tab4 = Window:MakeTab({ Name = "Teleports", PremiumOnly = false })
+local TabBinds = Window:MakeTab({ Name = "Keybinds", PremiumOnly = false })
+local Tab2 = Window:MakeTab({ Name = "Options", PremiumOnly = false })
+
+---------------------------------------------------------
+-- PATCHES TAB
+---------------------------------------------------------
+Tab1:AddToggle({
+    Name = "No Fall Damage",
+    Default = false,
+    Callback = function(Value)
+        fallDamageEnabled = Value
+        FallDamage.Fire = Value and function(self, ...) end or oldFire
+    end
+})
+
+Tab1:AddToggle({
+    Name = "Shoot In Air",
+    Default = false,
+    Callback = function(Value)
+        zipEnabled = Value
+        local char = plr.Character
+        if Value then
+            if char then patchZip(char) end
+            if zipConn then zipConn:Disconnect() end
+            zipConn = plr.CharacterAdded:Connect(patchZip)
+            startAutoRotateFix()
+        else
+            if char then removeZip(char) end
+            if zipConn then zipConn:Disconnect() zipConn = nil end
+            stopAutoRotateFix()
+        end
+    end
+})
+
+---------------------------------------------------------
+-- MOVEMENT TAB
+---------------------------------------------------------
+local noclipUIToggle = TabMove:AddToggle({
+    Name = "Noclip",
+    Default = false,
+    Callback = function(Value)
+        toggleNoclip(Value)
+    end
+})
+
+local flyUIToggle = TabMove:AddToggle({
+    Name = "Fly",
+    Default = false,
+    Callback = function(Value)
+        if Value then sFLY(false) else NOFLY() end
+    end
+})
+
+TabMove:AddSlider({
+    Name = "Fly Speed",
+    Min = 1,
+    Max = 10,
+    Default = 1,
+    Color = Color3.fromRGB(255,255,255),
+    Increment = 1,
+    ValueName = "Multiplier",
+    Callback = function(Value)
+        iyflyspeed = Value
+    end
+})
+
+---------------------------------------------------------
+-- VISUALS TAB
+---------------------------------------------------------
+TabVis:AddToggle({
+    Name = "Player ESP",
+    Default = false,
+    Callback = function(Value)
+        ESPenabled = Value
+        if Value then
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= plr then ESP(p, espLogic) end
+            end
+            espPlayerAddedConn = Players.PlayerAdded:Connect(function(p)
+                p.CharacterAdded:Connect(function()
+                    if ESPenabled then task.wait(1) ESP(p, espLogic) end
+                end)
+            end)
+        else
+            if espPlayerAddedConn then espPlayerAddedConn:Disconnect() espPlayerAddedConn = nil end
+            clearAllESP()
+        end
+    end
+})
+
+---------------------------------------------------------
+-- AUTO TAB
+---------------------------------------------------------
+TabAuto:AddLabel("Missions")
+
+TabAuto:AddToggle({
+    Name = "Auto Smuggler",
+    Default = false,
+    Callback = function(Value)
+        smugglerEnabled = Value
+        if Value then
+            if smugglerThread then task.cancel(smugglerThread) end
+            smugglerThread = task.spawn(runSmugglerLoop)
+            warn("[Smuggler] Started")
+        else
+            if smugglerThread then
+                task.cancel(smugglerThread)
+                smugglerThread = nil
+            end
+            warn("[Smuggler] Stopped")
+        end
+    end
+})
+
+---------------------------------------------------------
+-- SCRIPTS TAB
+---------------------------------------------------------
+Tab3:AddLabel("Loaders")
+
+Tab3:AddButton({
+    Name = "Infinite Yield",
+    Callback = function()
+        task.spawn(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+        end)
+    end
+})
+
+Tab3:AddButton({
+    Name = "Dex++",
+    Callback = function()
+        task.spawn(function()
+            loadstring(game:HttpGet("https://github.com/AZYsGithub/DexPlusPlus/releases/latest/download/out.lua"))()
+        end)
+    end
+})
+
+---------------------------------------------------------
+-- TELEPORTS TAB
+---------------------------------------------------------
+Tab4:AddLabel("Safes")
+
+Tab4:AddButton({
+    Name = "TP to RedSafe",
+    Callback = function()
+        local redSafe = workspace:FindFirstChild("RedSafe", true)
+        local char = plr.Character
+        if redSafe and char and char:FindFirstChild("HumanoidRootPart") then
+            char:PivotTo(redSafe:IsA("Model") and redSafe:GetPivot() or redSafe.CFrame)
+        else
+            warn("RedSafe not found.")
+        end
+    end
+})
+
+Tab4:AddLabel("Locations")
+
+Tab4:AddButton({
+    Name = "TP to Safehouse",
+    Callback = function()
+        local char = plr.Character
+        if not (char and char:FindFirstChild("HumanoidRootPart")) then return end
+        local scenicNPCs = workspace:FindFirstChild("Scenic NPCs")
+        local dealer = scenicNPCs and scenicNPCs:FindFirstChild("Dropoff Dealer")
+        local head = dealer and dealer:FindFirstChild("Head")
+        if head then
+            char:PivotTo(head:IsA("Model") and head:GetPivot() or head.CFrame)
+        end
+    end
+})
+
+Tab4:AddLabel("Heists")
+
+local function tpToVault(path)
+    local char = plr.Character
+    if not (char and char:FindFirstChild("HumanoidRootPart")) then return end
+    local obj = workspace
+    for _, key in ipairs(path) do
+        obj = obj:FindFirstChild(key)
+        if not obj then warn("Path not found: "..key) return end
+    end
+    char:PivotTo(obj:IsA("Model") and obj:GetPivot() or obj.CFrame)
+end
+
+Tab4:AddButton({
+    Name = "TP DataCenter Vault 1",
+    Callback = function()
+        local heists = workspace:FindFirstChild("Heists")
+        local dc = heists and heists:FindFirstChild("DataCenter")
+        if not dc then warn("DataCenter not found") return end
+        local vaults = {}
+        for _, d in ipairs(dc:GetDescendants()) do
+            if d.Name == "Closed" then table.insert(vaults, d) end
+        end
+        local char = plr.Character
+        if vaults[1] and char then
+            char:PivotTo(vaults[1]:IsA("Model") and vaults[1]:GetPivot() or vaults[1].CFrame)
+        end
+    end
+})
+
+Tab4:AddButton({
+    Name = "TP DataCenter Vault 2",
+    Callback = function()
+        local heists = workspace:FindFirstChild("Heists")
+        local dc = heists and heists:FindFirstChild("DataCenter")
+        if not dc then warn("DataCenter not found") return end
+        local vaults = {}
+        for _, d in ipairs(dc:GetDescendants()) do
+            if d.Name == "Closed" then table.insert(vaults, d) end
+        end
+        local char = plr.Character
+        if vaults[2] and char then
+            char:PivotTo(vaults[2]:IsA("Model") and vaults[2]:GetPivot() or vaults[2].CFrame)
+        end
+    end
+})
+
+Tab4:AddButton({
+    Name = "TP Bank Vault",
+    Callback = function()
+        tpToVault({"Heists", "Bank", "Vault", "Closed"})
+    end
+})
+
+Tab4:AddButton({
+    Name = "TP Jewelry Store Vault",
+    Callback = function()
+        tpToVault({"Heists", "JewelryStore", "Vault", "Closed"})
+    end
+})
+
+Tab4:AddButton({
+    Name = "TP Penthouse Vault",
+    Callback = function()
+        tpToVault({"Heists", "PentHouse", "Vault", "Closed"})
+    end
+})
+
+---------------------------------------------------------
+-- KEYBINDS TAB
+---------------------------------------------------------
+TabBinds:AddBind({
+    Name = "Toggle GUI",
+    Default = Enum.KeyCode.K,
+    Hold = false,
+    Callback = function()
+        local orionGui = COREGUI:FindFirstChild("Orion") or (gethui and gethui():FindFirstChild("Orion"))
+        if orionGui then orionGui.Enabled = not orionGui.Enabled end
+    end
+})
+
+TabBinds:AddBind({
+    Name = "Toggle Fly",
+    Default = Enum.KeyCode.H,
+    Hold = false,
+    Callback = function()
+        local newState = not FLYING
+        if newState then sFLY(false) else NOFLY() end
+        pcall(function() flyUIToggle:Set(newState) end)
+    end
+})
+
+TabBinds:AddBind({
+    Name = "Toggle Noclip",
+    Default = Enum.KeyCode.N,
+    Hold = false,
+    Callback = function()
+        local newState = not noclipEnabled
+        toggleNoclip(newState)
+        pcall(function() noclipUIToggle:Set(newState) end)
+    end
+})
+
+---------------------------------------------------------
+-- OPTIONS TAB
+---------------------------------------------------------
+Tab2:AddLabel("UI Options")
+
+Tab2:AddButton({
+    Name = "Kill UI",
+    Callback = function()
+        FallDamage.Fire = oldFire
+        if zipConn then zipConn:Disconnect() end
+        RunService:UnbindFromRenderStep("AutoRotateFix")
+        toggleNoclip(false)
+        NOFLY()
+        smugglerEnabled = false
+        if smugglerThread then task.cancel(smugglerThread) smugglerThread = nil end
+        ESPenabled = false
+        if espPlayerAddedConn then espPlayerAddedConn:Disconnect() end
+        clearAllESP()
+        OrionLib:Destroy()
+    end
+})
+
+---------------------------------------------------------
+-- INIT
+---------------------------------------------------------
+OrionLib:Init()
