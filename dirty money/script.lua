@@ -1,10 +1,11 @@
-local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/jensonhirst/Orion/main/source')))()
-local Window = OrionLib:MakeWindow({
-    Name = "Mod Menu",
-    HidePremium = true,
-    SaveConfig = true,
-    IntroEnabled = true,
-    IntroText = "Loading Mod Menu..."
+-- Load Elerium Library
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/memejames/elerium-v2-ui-library//main/Library", true))()
+
+local Window = library:AddWindow("Mod Menu", {
+    main_color = Color3.fromRGB(41, 74, 122),
+    min_size = Vector2.new(500, 400),
+    toggle_key = Enum.KeyCode.RightShift,
+    can_resize = true
 })
 
 local Players = game:GetService("Players")
@@ -42,6 +43,8 @@ local smugglerThread = nil
 local noclip = false
 local Clip = true
 local Noclipping = nil
+
+local GlobalBindsConn = nil
 
 ---------------------------------------------------------
 -- NOCLIP
@@ -156,7 +159,7 @@ end
 
 ---------------------------------------------------------
 -- FLY
----------------------------------------------------------
+-----------------------------------------
 function sFLY(vfly)
     local char = plr.Character or plr.CharacterAdded:Wait()
     local humanoid = char:FindFirstChildOfClass("Humanoid")
@@ -378,12 +381,9 @@ end
 ---------------------------------------------------------
 -- SMUGGLER AUTO
 ---------------------------------------------------------
-
--- FIX 1: waitForNPC now accepts and respects a cancellation flag (passed by reference via table)
 local function waitForNPC(path, timeout, cancelRef)
     local deadline = tick() + (timeout or 60)
     while tick() < deadline do
-        -- FIX 1: bail immediately if smuggler was disabled mid-wait
         if cancelRef and not cancelRef.active then return nil end
 
         local obj = workspace
@@ -406,8 +406,6 @@ local function runSmugglerLoop()
             continue
         end
 
-        -- FIX 2: missionUI looked up fresh each iteration so respawns/rebuilds
-        --         don't leave a stale reference keeping a destroyed object alive.
         local missionUI = plr.PlayerGui:FindFirstChild("Mission")
 
         -- 1. CLEAN STATE REFRESH
@@ -416,7 +414,6 @@ local function runSmugglerLoop()
             warn("[Smuggler] Clearing old NPC debris...")
             while smugglerEnabled and questsFolder and questsFolder:FindFirstChild("CourierNPC") do
                 task.wait(0.5)
-                -- FIX 3: re-fetch questsFolder each tick so old reference doesn't linger
                 questsFolder = workspace:FindFirstChild("Quests")
             end
         end
@@ -424,7 +421,6 @@ local function runSmugglerLoop()
         if not smugglerEnabled then break end
 
         -- 2. FORCE RE-ALIGN DEALER LOCATION
-        -- FIX 4: always re-fetch scenic each step; never hold a stale reference across awaits
         local scenic = workspace:FindFirstChild("Scenic NPCs")
         if scenic and scenic:FindFirstChild("MissionDealer1") then
             scenic.MissionDealer1:PivotTo(CFrame.new(-1565, -29, 510))
@@ -453,7 +449,6 @@ local function runSmugglerLoop()
                 QuestName = "Courier"
             })
 
-            -- FIX 2 (cont): re-fetch missionUI before use in case PlayerGui rebuilt
             missionUI = plr.PlayerGui:FindFirstChild("Mission")
             if missionUI then
                 local mainFrame = missionUI:FindFirstChild("Main")
@@ -466,11 +461,9 @@ local function runSmugglerLoop()
         if not smugglerEnabled then break end
 
         -- 4. DELIVERY TELEPORT LEG
-        -- FIX 1 (cont): pass cancelRef so waitForNPC exits immediately on disable
         warn("[Smuggler] Tracking active CourierNPC...")
         local cancelRef = { active = true }
 
-        -- Mirror smugglerEnabled into cancelRef so the waiter can see it
         task.spawn(function()
             while cancelRef.active do
                 if not smugglerEnabled then
@@ -481,7 +474,7 @@ local function runSmugglerLoop()
         end)
 
         local courierHead = waitForNPC({"Quests", "CourierNPC", "Head"}, 120, cancelRef)
-        cancelRef.active = false -- stop the mirror watcher
+        cancelRef.active = false 
 
         if not smugglerEnabled then break end
 
@@ -497,7 +490,6 @@ local function runSmugglerLoop()
         if not smugglerEnabled then break end
 
         -- 5. RETURN TURN-IN LEG
-        -- FIX 4 (cont): fresh fetch, no stale scenic/missionDealer reference
         scenic = workspace:FindFirstChild("Scenic NPCs")
         missionDealer = scenic and scenic:FindFirstChild("MissionDealer1")
         dealerHead = missionDealer and missionDealer:FindFirstChild("Head")
@@ -516,179 +508,8 @@ local function runSmugglerLoop()
 end
 
 ---------------------------------------------------------
--- TABS
+-- TELEPORT VAULT HANDLER
 ---------------------------------------------------------
-local Tab1 = Window:MakeTab({ Name = "Patches", PremiumOnly = false })
-local TabMove = Window:MakeTab({ Name = "Movement", PremiumOnly = false })
-local TabVis = Window:MakeTab({ Name = "Visuals", PremiumOnly = false })
-local TabAuto = Window:MakeTab({ Name = "Auto", PremiumOnly = false })
-local Tab3 = Window:MakeTab({ Name = "Scripts", PremiumOnly = false })
-local Tab4 = Window:MakeTab({ Name = "Teleports", PremiumOnly = false })
-local TabBinds = Window:MakeTab({ Name = "Keybinds", PremiumOnly = false })
-local Tab2 = Window:MakeTab({ Name = "Options", PremiumOnly = false })
-
----------------------------------------------------------
--- PATCHES TAB
----------------------------------------------------------
-Tab1:AddToggle({
-    Name = "No Fall Damage",
-    Default = false,
-    Callback = function(Value)
-        fallDamageEnabled = Value
-        FallDamage.Fire = Value and function(self, ...) end or oldFire
-    end
-})
-
-Tab1:AddToggle({
-    Name = "Shoot In Air",
-    Default = false,
-    Callback = function(Value)
-        zipEnabled = Value
-        local char = plr.Character
-        if Value then
-            if char then patchZip(char) end
-            if zipConn then zipConn:Disconnect() end
-            zipConn = plr.CharacterAdded:Connect(patchZip)
-            startAutoRotateFix()
-        else
-            if char then removeZip(char) end
-            if zipConn then zipConn:Disconnect() zipConn = nil end
-            stopAutoRotateFix()
-        end
-    end
-})
-
----------------------------------------------------------
--- MOVEMENT TAB
----------------------------------------------------------
-local noclipToggleUI = TabMove:AddToggle({
-    Name = "Noclip",
-    Default = false,
-    Callback = function(Value)
-        setNoclip(Value)
-    end
-})
-
-local flyUIToggle = TabMove:AddToggle({
-    Name = "Fly",
-    Default = false,
-    Callback = function(Value)
-        if Value then sFLY(false) else NOFLY() end
-    end
-})
-
-TabMove:AddSlider({
-    Name = "Fly Speed",
-    Min = 1,
-    Max = 10,
-    Default = 1,
-    Color = Color3.fromRGB(255,255,255),
-    Increment = 1,
-    ValueName = "Multiplier",
-    Callback = function(Value)
-        iyflyspeed = Value
-    end
-})
-
----------------------------------------------------------
--- VISUALS TAB
----------------------------------------------------------
-TabVis:AddToggle({
-    Name = "Player ESP",
-    Default = false,
-    Callback = function(Value)
-        ESPenabled = Value
-        if Value then
-            manageESP(espLogic)
-        else
-            clearAllESP()
-        end
-    end
-})
-
----------------------------------------------------------
--- AUTO TAB
----------------------------------------------------------
-TabAuto:AddLabel("Missions")
-
-TabAuto:AddToggle({
-    Name = "Auto Smuggler",
-    Default = false,
-    Callback = function(Value)
-        smugglerEnabled = Value
-        if Value then
-            if smugglerThread then task.cancel(smugglerThread) end
-            smugglerThread = task.spawn(runSmugglerLoop)
-            warn("[Smuggler] Started")
-        else
-            if smugglerThread then
-                task.cancel(smugglerThread)
-                smugglerThread = nil
-            end
-            warn("[Smuggler] Stopped")
-        end
-    end
-})
-
----------------------------------------------------------
--- SCRIPTS TAB
----------------------------------------------------------
-Tab3:AddLabel("Loaders")
-
-Tab3:AddButton({
-    Name = "Infinite Yield",
-    Callback = function()
-        task.spawn(function()
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
-        end)
-    end
-})
-
-Tab3:AddButton({
-    Name = "Dex++",
-    Callback = function()
-        task.spawn(function()
-            loadstring(game:HttpGet("https://github.com/AZYsGithub/DexPlusPlus/releases/latest/download/out.lua"))()
-        end)
-    end
-})
-
----------------------------------------------------------
--- TELEPORTS TAB
----------------------------------------------------------
-Tab4:AddLabel("Safes")
-
-Tab4:AddButton({
-    Name = "TP to RedSafe",
-    Callback = function()
-        local redSafe = workspace:FindFirstChild("RedSafe", true)
-        local char = plr.Character
-        if redSafe and char and char:FindFirstChild("HumanoidRootPart") then
-            char:PivotTo(redSafe:IsA("Model") and redSafe:GetPivot() or redSafe.CFrame)
-        else
-            warn("RedSafe not found.")
-        end
-    end
-})
-
-Tab4:AddLabel("Locations")
-
-Tab4:AddButton({
-    Name = "TP to Safehouse",
-    Callback = function()
-        local char = plr.Character
-        if not (char and char:FindFirstChild("HumanoidRootPart")) then return end
-        local scenicNPCs = workspace:FindFirstChild("Scenic NPCs")
-        local dealer = scenicNPCs and scenicNPCs:FindFirstChild("Dropoff Dealer")
-        local head = dealer and dealer:FindFirstChild("Head")
-        if head then
-            char:PivotTo(head:IsA("Model") and head:GetPivot() or head.CFrame)
-        end
-    end
-})
-
-Tab4:AddLabel("Heists")
-
 local function tpToVault(path)
     local char = plr.Character
     if not (char and char:FindFirstChild("HumanoidRootPart")) then return end
@@ -700,118 +521,233 @@ local function tpToVault(path)
     char:PivotTo(obj:IsA("Model") and obj:GetPivot() or obj.CFrame)
 end
 
-Tab4:AddButton({
-    Name = "TP DataCenter Vault 1",
-    Callback = function()
-        local heists = workspace:FindFirstChild("Heists")
-        local dc = heists and heists:FindFirstChild("DataCenter")
-        if not dc then warn("DataCenter not found") return end
-        local vaults = {}
-        for _, d in ipairs(dc:GetDescendants()) do
-            if d.Name == "Closed" then table.insert(vaults, d) end
-        end
-        local char = plr.Character
-        if vaults[1] and char then
-            char:PivotTo(vaults[1]:IsA("Model") and vaults[1]:GetPivot() or vaults[1].CFrame)
-        end
-    end
-})
+---------------------------------------------------------
+-- ELERIUM TABS DEFINITIONS
+---------------------------------------------------------
+local Tab1 = Window:AddTab("Patches")
+local TabMove = Window:AddTab("Movement")
+local TabVis = Window:AddTab("Visuals")
+local TabAuto = Window:AddTab("Auto")
+local Tab3 = Window:AddTab("Scripts")
+local Tab4 = Window:AddTab("Teleports")
+local TabBinds = Window:AddTab("Keybinds")
+local Tab2 = Window:AddTab("Options")
 
-Tab4:AddButton({
-    Name = "TP DataCenter Vault 2",
-    Callback = function()
-        local heists = workspace:FindFirstChild("Heists")
-        local dc = heists and heists:FindFirstChild("DataCenter")
-        if not dc then warn("DataCenter not found") return end
-        local vaults = {}
-        for _, d in ipairs(dc:GetDescendants()) do
-            if d.Name == "Closed" then table.insert(vaults, d) end
+---------------------------------------------------------
+-- PATCHES TAB
+---------------------------------------------------------
+local patchFall = Tab1:AddSwitch("No Fall Damage", function(Value)
+    fallDamageEnabled = Value
+    FallDamage.Fire = Value and function(self, ...) end or oldFire
+end)
+patchFall:Set(false)
+
+local patchAir = Tab1:AddSwitch("Shoot In Air", function(Value)
+    zipEnabled = Value
+    local char = plr.Character
+    if Value then
+        if char then patchZip(char) end
+        if zipConn then zipConn:Disconnect() end
+        zipConn = plr.CharacterAdded:Connect(patchZip)
+        startAutoRotateFix()
+    else
+        if char then removeZip(char) end
+        if zipConn then zipConn:Disconnect() zipConn = nil end
+        stopAutoRotateFix()
+    end
+end)
+patchAir:Set(false)
+
+---------------------------------------------------------
+-- MOVEMENT TAB
+---------------------------------------------------------
+local noclipToggle = TabMove:AddSwitch("Noclip", function(Value)
+    setNoclip(Value)
+end)
+noclipToggle:Set(false)
+
+local flyToggle = TabMove:AddSwitch("Fly", function(Value)
+    if Value then sFLY(false) else NOFLY() end
+end)
+flyToggle:Set(false)
+
+local flySlider = TabMove:AddSlider("Fly Speed", function(Value)
+    iyflyspeed = Value
+end, {["min"] = 1, ["max"] = 10})
+flySlider:Set(1)
+
+---------------------------------------------------------
+-- VISUALS TAB
+---------------------------------------------------------
+local espToggle = TabVis:AddSwitch("Player ESP", function(Value)
+    ESPenabled = Value
+    if Value then
+        manageESP(espLogic)
+    else
+        clearAllESP()
+    end
+end)
+espToggle:Set(false)
+
+---------------------------------------------------------
+-- AUTO TAB
+---------------------------------------------------------
+TabAuto:AddLabel("Missions")
+
+local smugglerToggle = TabAuto:AddSwitch("Auto Smuggler", function(Value)
+    smugglerEnabled = Value
+    if Value then
+        if smugglerThread then task.cancel(smugglerThread) end
+        smugglerThread = task.spawn(runSmugglerLoop)
+        warn("[Smuggler] Started")
+    else
+        if smugglerThread then
+            task.cancel(smugglerThread)
+            smugglerThread = nil
         end
-        local char = plr.Character
-        if vaults[2] and char then
-            char:PivotTo(vaults[2]:IsA("Model") and vaults[2]:GetPivot() or vaults[2].CFrame)
-        end
+        warn("[Smuggler] Stopped")
     end
-})
+end)
+smugglerToggle:Set(false)
 
-Tab4:AddButton({
-    Name = "TP Bank Vault",
-    Callback = function()
-        tpToVault({"Heists", "Bank", "Vault", "Closed"})
-    end
-})
+---------------------------------------------------------
+-- SCRIPTS TAB
+---------------------------------------------------------
+Tab3:AddLabel("Loaders")
 
-Tab4:AddButton({
-    Name = "TP Jewelry Store Vault",
-    Callback = function()
-        tpToVault({"Heists", "JewelryStore", "Vault", "Closed"})
-    end
-})
+Tab3:AddButton("Infinite Yield", function()
+    task.spawn(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+    end)
+end)
 
-Tab4:AddButton({
-    Name = "TP Penthouse Vault",
-    Callback = function()
-        tpToVault({"Heists", "PentHouse", "Vault", "Closed"})
+Tab3:AddButton("Dex++", function()
+    task.spawn(function()
+        loadstring(game:HttpGet("https://github.com/AZYsGithub/DexPlusPlus/releases/latest/download/out.lua"))()
+    end)
+end)
+
+---------------------------------------------------------
+-- TELEPORTS TAB
+---------------------------------------------------------
+Tab4:AddLabel("Safes")
+
+Tab4:AddButton("TP to RedSafe", function()
+    local redSafe = workspace:FindFirstChild("RedSafe", true)
+    local char = plr.Character
+    if redSafe and char and char:FindFirstChild("HumanoidRootPart") then
+        char:PivotTo(redSafe:IsA("Model") and redSafe:GetPivot() or redSafe.CFrame)
+    else
+        warn("RedSafe not found.")
     end
-})
+end)
+
+Tab4:AddLabel("Locations")
+
+Tab4:AddButton("TP to Safehouse", function()
+    local char = plr.Character
+    if not (char and char:FindFirstChild("HumanoidRootPart")) then return end
+    local scenicNPCs = workspace:FindFirstChild("Scenic NPCs")
+    local dealer = scenicNPCs and scenicNPCs:FindFirstChild("Dropoff Dealer")
+    local head = dealer and dealer:FindFirstChild("Head")
+    if head then
+        char:PivotTo(head:IsA("Model") and head:GetPivot() or head.CFrame)
+    end
+end)
+
+Tab4:AddLabel("Heists")
+
+Tab4:AddButton("TP DataCenter Vault 1", function()
+    local heists = workspace:FindFirstChild("Heists")
+    local dc = heists and heists:FindFirstChild("DataCenter")
+    if not dc then warn("DataCenter not found") return end
+    local vaults = {}
+    for _, d in ipairs(dc:GetDescendants()) do
+        if d.Name == "Closed" then table.insert(vaults, d) end
+    end
+    local char = plr.Character
+    if vaults[1] and char then
+        char:PivotTo(vaults[1]:IsA("Model") and vaults[1]:GetPivot() or vaults[1].CFrame)
+    end
+end)
+
+Tab4:AddButton("TP DataCenter Vault 2", function()
+    local heists = workspace:FindFirstChild("Heists")
+    local dc = heists and heists:FindFirstChild("DataCenter")
+    if not dc then warn("DataCenter not found") return end
+    local vaults = {}
+    for _, d in ipairs(dc:GetDescendants()) do
+        if d.Name == "Closed" then table.insert(vaults, d) end
+    end
+    local char = plr.Character
+    if vaults[2] and char then
+        char:PivotTo(vaults[2]:IsA("Model") and vaults[2]:GetPivot() or vaults[2].CFrame)
+    end
+end)
+
+Tab4:AddButton("TP Bank Vault", function()
+    tpToVault({"Heists", "Bank", "Vault", "Closed"})
+end)
+
+Tab4:AddButton("TP Jewelry Store Vault", function()
+    tpToVault({"Heists", "JewelryStore", "Vault", "Closed"})
+end)
+
+Tab4:AddButton("TP Penthouse Vault", function()
+    tpToVault({"Heists", "PentHouse", "Vault", "Closed"})
+end)
 
 ---------------------------------------------------------
 -- KEYBINDS TAB
 ---------------------------------------------------------
-TabBinds:AddBind({
-    Name = "Toggle GUI",
-    Default = Enum.KeyCode.K,
-    Hold = false,
-    Callback = function()
-        local orionGui = COREGUI:FindFirstChild("Orion") or (gethui and gethui():FindFirstChild("Orion"))
-        if orionGui then orionGui.Enabled = not orionGui.Enabled end
-    end
-})
-
-TabBinds:AddBind({
-    Name = "Toggle Fly",
-    Default = Enum.KeyCode.H,
-    Hold = false,
-    Callback = function()
-        pcall(function()
-            flyUIToggle:Set(not flyUIToggle.Value)
-        end)
-    end
-})
-
-TabBinds:AddBind({
-    Name = "Toggle Noclip",
-    Default = Enum.KeyCode.N,
-    Hold = false,
-    Callback = function()
-        pcall(function()
-            noclipToggleUI:Set(not noclip)
-        end)
-    end
-})
+TabBinds:AddLabel("Active Keybinds")
+TabBinds:AddLabel("[ K ] - Toggle Menu UI Display")
+TabBinds:AddLabel("[ H ] - Toggle Fly Activation")
+TabBinds:AddLabel("[ N ] - Toggle Noclip Status")
 
 ---------------------------------------------------------
 -- OPTIONS TAB
 ---------------------------------------------------------
 Tab2:AddLabel("UI Options")
 
-Tab2:AddButton({
-    Name = "Kill UI",
-    Callback = function()
-        FallDamage.Fire = oldFire
-        if zipConn then zipConn:Disconnect() end
-        RunService:UnbindFromRenderStep("AutoRotateFix")
+Tab2:AddButton("Kill UI", function()
+    FallDamage.Fire = oldFire
+    if zipConn then zipConn:Disconnect() end
+    RunService:UnbindFromRenderStep("AutoRotateFix")
 
-        setNoclip(false)
-        NOFLY()
+    setNoclip(false)
+    NOFLY()
 
-        smugglerEnabled = false
-        if smugglerThread then task.cancel(smugglerThread) smugglerThread = nil end
-        ESPenabled = false
-        clearAllESP()
-        OrionLib:Destroy()
+    smugglerEnabled = false
+    if smugglerThread then task.cancel(smugglerThread) smugglerThread = nil end
+    ESPenabled = false
+    clearAllESP()
+    
+    if GlobalBindsConn then GlobalBindsConn:Disconnect() end
+    
+    local imguiGui = COREGUI:FindFirstChild("imgui")
+    if imguiGui then imguiGui:Destroy() end
+end)
+
+---------------------------------------------------------
+-- GLOBAL INPUT LISTENER (KEYBINDS WORKAROUND)
+---------------------------------------------------------
+GlobalBindsConn = UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    
+    if input.KeyCode == Enum.KeyCode.K then
+        local imguiGui = COREGUI:FindFirstChild("imgui")
+        if imguiGui then imguiGui.Enabled = not imguiGui.Enabled end
+    elseif input.KeyCode == Enum.KeyCode.H then
+        if flyToggle then
+            flyToggle:Set(not FLYING)
+        end
+    elseif input.KeyCode == Enum.KeyCode.N then
+        if noclipToggle then
+            noclipToggle:Set(not noclip)
+        end
     end
-})
+end)
 
 ---------------------------------------------------------
 -- RESPAWN HANDLER
@@ -822,8 +758,3 @@ plr.CharacterAdded:Connect(function(newChar)
         sFLY(false)
     end
 end)
-
----------------------------------------------------------
--- INIT
----------------------------------------------------------
-OrionLib:Init()
