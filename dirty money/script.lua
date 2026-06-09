@@ -48,16 +48,16 @@ local Noclipping = nil
 ---------------------------------------------------------
 local function setNoclip(state)
     noclip = state
-    
-    if Noclipping then 
-        Noclipping:Disconnect() 
-        Noclipping = nil 
+
+    if Noclipping then
+        Noclipping:Disconnect()
+        Noclipping = nil
     end
 
     if noclip then
         Clip = false
         task.wait(0.1)
-        
+
         local function NoclipLoop()
             if Clip == false and plr.Character ~= nil then
                 for _, child in pairs(plr.Character:GetDescendants()) do
@@ -70,8 +70,7 @@ local function setNoclip(state)
         Noclipping = RunService.Stepped:Connect(NoclipLoop)
     else
         Clip = true
-        
-        -- Force a clean state refresh so the physics engine re-evaluates character boundaries
+
         local character = plr.Character
         if character then
             local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -81,6 +80,7 @@ local function setNoclip(state)
         end
     end
 end
+
 ---------------------------------------------------------
 -- UTILITY
 ---------------------------------------------------------
@@ -256,7 +256,7 @@ function NOFLY()
     FLYING = false
     if flyKeyDown then pcall(function() flyKeyDown:Disconnect() end) flyKeyDown = nil end
     if flyKeyUp then pcall(function() flyKeyUp:Disconnect() end) flyKeyUp = nil end
-    
+
     if plr.Character and plr.Character:FindFirstChildOfClass("Humanoid") then
         plr.Character:FindFirstChildOfClass("Humanoid").PlatformStand = false
     end
@@ -378,9 +378,14 @@ end
 ---------------------------------------------------------
 -- SMUGGLER AUTO
 ---------------------------------------------------------
-local function waitForNPC(path, timeout)
+
+-- FIX 1: waitForNPC now accepts and respects a cancellation flag (passed by reference via table)
+local function waitForNPC(path, timeout, cancelRef)
     local deadline = tick() + (timeout or 60)
     while tick() < deadline do
+        -- FIX 1: bail immediately if smuggler was disabled mid-wait
+        if cancelRef and not cancelRef.active then return nil end
+
         local obj = workspace
         local found = true
         for _, key in ipairs(path) do
@@ -394,8 +399,6 @@ local function waitForNPC(path, timeout)
 end
 
 local function runSmugglerLoop()
-    local missionUI = plr.PlayerGui:FindFirstChild("Mission")
-
     while smugglerEnabled do
         local char = plr.Character
         if not (char and char:FindFirstChild("HumanoidRootPart")) then
@@ -403,12 +406,17 @@ local function runSmugglerLoop()
             continue
         end
 
-        -- 1. CLEAN STATE REFRESH: Ensure any residual NPC from the last run is gone
+        -- FIX 2: missionUI looked up fresh each iteration so respawns/rebuilds
+        --         don't leave a stale reference keeping a destroyed object alive.
+        local missionUI = plr.PlayerGui:FindFirstChild("Mission")
+
+        -- 1. CLEAN STATE REFRESH
         local questsFolder = workspace:FindFirstChild("Quests")
         if questsFolder and questsFolder:FindFirstChild("CourierNPC") then
             warn("[Smuggler] Clearing old NPC debris...")
             while smugglerEnabled and questsFolder and questsFolder:FindFirstChild("CourierNPC") do
                 task.wait(0.5)
+                -- FIX 3: re-fetch questsFolder each tick so old reference doesn't linger
                 questsFolder = workspace:FindFirstChild("Quests")
             end
         end
@@ -416,6 +424,7 @@ local function runSmugglerLoop()
         if not smugglerEnabled then break end
 
         -- 2. FORCE RE-ALIGN DEALER LOCATION
+        -- FIX 4: always re-fetch scenic each step; never hold a stale reference across awaits
         local scenic = workspace:FindFirstChild("Scenic NPCs")
         if scenic and scenic:FindFirstChild("MissionDealer1") then
             scenic.MissionDealer1:PivotTo(CFrame.new(-1565, -29, 510))
@@ -426,7 +435,7 @@ local function runSmugglerLoop()
         scenic = workspace:FindFirstChild("Scenic NPCs")
         local missionDealer = scenic and scenic:FindFirstChild("MissionDealer1")
         local dealerHead = missionDealer and missionDealer:FindFirstChild("Head")
-        
+
         if dealerHead then
             tpTo(dealerHead)
             task.wait(0.5)
@@ -444,24 +453,41 @@ local function runSmugglerLoop()
                 QuestName = "Courier"
             })
 
+            -- FIX 2 (cont): re-fetch missionUI before use in case PlayerGui rebuilt
+            missionUI = plr.PlayerGui:FindFirstChild("Mission")
             if missionUI then
                 local mainFrame = missionUI:FindFirstChild("Main")
                 if mainFrame then mainFrame.Visible = false end
                 missionUI.Enabled = false
             end
-            task.wait(1) -- Cooldown for server to process contract and spawn the target
+            task.wait(1)
         end
 
         if not smugglerEnabled then break end
 
         -- 4. DELIVERY TELEPORT LEG
+        -- FIX 1 (cont): pass cancelRef so waitForNPC exits immediately on disable
         warn("[Smuggler] Tracking active CourierNPC...")
-        local courierHead = waitForNPC({"Quests", "CourierNPC", "Head"}, 120)
+        local cancelRef = { active = true }
+
+        -- Mirror smugglerEnabled into cancelRef so the waiter can see it
+        task.spawn(function()
+            while cancelRef.active do
+                if not smugglerEnabled then
+                    cancelRef.active = false
+                end
+                task.wait(0.2)
+            end
+        end)
+
+        local courierHead = waitForNPC({"Quests", "CourierNPC", "Head"}, 120, cancelRef)
+        cancelRef.active = false -- stop the mirror watcher
+
         if not smugglerEnabled then break end
-        
+
         if courierHead then
             tpTo(courierHead)
-            task.wait(1.5) -- Time to register touch confirmation on server
+            task.wait(1.5)
         else
             warn("[Smuggler] Target lost, restarting loop context...")
             task.wait(1)
@@ -471,6 +497,7 @@ local function runSmugglerLoop()
         if not smugglerEnabled then break end
 
         -- 5. RETURN TURN-IN LEG
+        -- FIX 4 (cont): fresh fetch, no stale scenic/missionDealer reference
         scenic = workspace:FindFirstChild("Scenic NPCs")
         missionDealer = scenic and scenic:FindFirstChild("MissionDealer1")
         dealerHead = missionDealer and missionDealer:FindFirstChild("Head")
@@ -481,12 +508,13 @@ local function runSmugglerLoop()
 
         if not smugglerEnabled then break end
 
-        -- 6. FIXED COOLDOWN (No more infinite deadlock)
+        -- 6. COOLDOWN
         warn("[Smuggler] Contract finalized. Waiting 3 seconds for session reset...")
         task.wait(3)
     end
     warn("[Smuggler] Loop stopped")
 end
+
 ---------------------------------------------------------
 -- TABS
 ---------------------------------------------------------
@@ -745,8 +773,8 @@ TabBinds:AddBind({
     Default = Enum.KeyCode.H,
     Hold = false,
     Callback = function()
-        pcall(function() 
-            flyUIToggle:Set(not flyUIToggle.Value) 
+        pcall(function()
+            flyUIToggle:Set(not flyUIToggle.Value)
         end)
     end
 })
@@ -773,11 +801,10 @@ Tab2:AddButton({
         FallDamage.Fire = oldFire
         if zipConn then zipConn:Disconnect() end
         RunService:UnbindFromRenderStep("AutoRotateFix")
-        
-        -- Clean terminate active connections
+
         setNoclip(false)
         NOFLY()
-        
+
         smugglerEnabled = false
         if smugglerThread then task.cancel(smugglerThread) smugglerThread = nil end
         ESPenabled = false
